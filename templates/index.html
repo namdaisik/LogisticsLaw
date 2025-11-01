@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8">
+    <title>물류법 RAG 검색 · 보고서</title>
+    <style>
+        body { font-family: "Segoe UI", Arial, sans-serif; margin: 0; background: #f4f6f9; color: #222; }
+        header { background: #14365d; color: #fff; padding: 1.5rem 2rem; }
+        main { max-width: 960px; margin: 2rem auto; padding: 0 1.5rem 4rem; }
+        h1 { margin: 0; font-size: 1.8rem; }
+        form { background: #fff; border-radius: 10px; padding: 1.5rem; box-shadow: 0 6px 18px rgba(20, 54, 93, 0.12); }
+        textarea { width: 100%; min-height: 120px; font-size: 1rem; padding: 0.75rem; border-radius: 8px; border: 1px solid #c8d2e1; resize: vertical; }
+        button { margin-top: 1rem; background: #3568b8; color: #fff; border: none; padding: 0.9rem 1.8rem; font-size: 1rem; border-radius: 999px; cursor: pointer; transition: background 0.2s ease; }
+        button:hover { background: #274f8c; }
+        .error { margin-top: 1rem; color: #c62828; font-weight: 600; }
+        .turn { margin-top: 2rem; background: #fff; border-radius: 12px; padding: 1.5rem; box-shadow: 0 4px 14px rgba(20, 54, 93, 0.08); }
+        .turn h2 { font-size: 1.1rem; margin: 0 0 0.5rem; color: #14365d; }
+        .turn pre { white-space: pre-wrap; word-break: keep-all; line-height: 1.5; font-size: 1rem; }
+        .sources { margin-top: 1rem; padding-left: 1.2rem; }
+        .sources li { margin-bottom: 0.75rem; }
+        .sources a { color: #0f4c81; text-decoration: none; font-weight: 600; }
+        .sources a:hover { text-decoration: underline; }
+        .snippet { display: block; margin-top: 0.35rem; color: #4b5b73; font-size: 0.92rem; }
+        .law-name { display: block; font-weight: 600; }
+        footer { max-width: 960px; margin: 0 auto 2rem; padding: 0 1.5rem; color: #5b6b84; font-size: 0.85rem; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>물류법 RAG 검색 · 보고서 생성</h1>
+    </header>
+    <main>
+        <form method="post" action="/query">
+            <label for="query">검색 질의를 입력하세요</label>
+            <textarea id="query" name="query" placeholder="예: 지입제 양도·양수 시 제출 서류">{{ last_query }}</textarea>
+            <button type="submit">보고서 생성</button>
+            {% if error %}
+            <div class="error">{{ error }}</div>
+            {% endif %}
+        </form>
+
+        {% for turn in turns %}
+        <div class="turn">
+            <h2>사용자</h2>
+            <pre>{{ turn.user }}</pre>
+            <h2>보고서</h2>
+            <pre>{{ turn.assistant }}</pre>
+            {% if turn.contexts %}
+            <h3>참고 문서</h3>
+            <ul class="sources">
+                {% for source in turn.contexts %}
+                <li>
+                    <span class="law-name">{{ source.law_name }}</span>
+                    {% if pdf_available %}
+                        <a href="{{ request.url_for('pdf', path=source.url_path) }}" target="_blank">{{ source.file }}</a>
+                    {% else %}
+                        {{ source.file }}
+                    {% endif %}
+                    ({{ source.pages }}, 점수 {{ "%.3f" | format(source.score) }})
+                    <span class="snippet">{{ source.snippet }}</span>
+                </li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </main>
+    <footer>
+        기본 설정: 임베딩 {{ config.embed_model }}, 생성모델 {{ config.chat_model }}, 상위 {{ config.top_k }}건.
+        필요 시 환경변수 <code>RAG_ARTICLE_ROOT</code>로 PDF 루트를 변경할 수 있습니다.
+    </footer>
+</body>
+</html>
+
