@@ -20,6 +20,9 @@ except Exception:  # pragma: no cover - dependency missing at runtime only
 
 
 INDEX_FILENAME = "mcp_index.json"
+EMBED_MATRIX_FILENAME = "mcp_embeddings.npy"
+
+_EMBEDDING_ARRAY_CACHE: Dict[str, np.ndarray] = {}
 
 
 @dataclass
@@ -123,6 +126,56 @@ def embed_texts(texts: Sequence[str], model: str, batch_size: int = 64) -> List[
     return vectors
 
 
+def _chunk_embedding_matrix(index: Dict[str, Any]) -> np.ndarray:
+    cached = index.get("_chunk_embedding_matrix")
+    if cached is not None:
+        return cached
+
+    chunks = index.get("chunks") or []
+    if not chunks:
+        matrix = np.empty((0, 0), dtype=np.float32)
+        index["_chunk_embedding_matrix"] = matrix
+        return matrix
+
+    sample = chunks[0]
+    if "embedding" in sample:
+        matrix = np.asarray([chunk["embedding"] for chunk in chunks], dtype=np.float32)
+        index["_chunk_embedding_matrix"] = matrix
+        return matrix
+
+    if "embedding_index" in sample:
+        root = index.get("root")
+        if not root:
+            raise RuntimeError("Index missing 'root' metadata required to load embeddings.")
+        matrix_path = os.path.join(root, EMBED_MATRIX_FILENAME)
+        cache_key = os.path.abspath(matrix_path)
+        matrix_full = _EMBEDDING_ARRAY_CACHE.get(cache_key)
+        if matrix_full is None:
+            if not os.path.exists(matrix_path):
+                raise FileNotFoundError(f"Embedding matrix file not found: {matrix_path}")
+            matrix_full = np.load(matrix_path, allow_pickle=False)
+            if matrix_full.dtype != np.float32:
+                matrix_full = matrix_full.astype(np.float32)
+            _EMBEDDING_ARRAY_CACHE[cache_key] = matrix_full
+
+        indices = np.asarray(
+            [chunk.get("embedding_index", -1) for chunk in chunks],
+            dtype=np.int64,
+        )
+        if np.any(indices < 0):
+            raise KeyError("embedding_index")
+        max_index = int(indices.max()) if indices.size else -1
+        if max_index >= matrix_full.shape[0]:
+            raise ValueError(
+                f"embedding_index {max_index} out of bounds for matrix with {matrix_full.shape[0]} rows"
+            )
+        matrix = matrix_full[indices]
+        index["_chunk_embedding_matrix"] = matrix
+        return matrix
+
+    raise KeyError("embedding")
+
+
 def build_or_load_index(root: str, embed_model: str, force_rebuild: bool) -> Dict[str, Any]:
     index_path = os.path.join(root, INDEX_FILENAME)
     existing: Dict[str, Any] = {}
@@ -188,7 +241,7 @@ def search_index(index: Dict[str, Any], query: str, embed_model: str, top_k: int
     if not index.get("chunks"):
         return []
     query_vec = np.array([vectors[0]], dtype=np.float32)
-    matrix = np.array([chunk["embedding"] for chunk in index["chunks"]], dtype=np.float32)
+    matrix = _chunk_embedding_matrix(index)
     if matrix.size == 0:
         return []
     sims = cosine_sim(matrix, query_vec).reshape(-1)
